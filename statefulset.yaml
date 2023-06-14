@@ -1,0 +1,91 @@
+---
+# https://kubernetes.io/docs/concepts/configuration/configmap/
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: my_redis-cluster
+  namespace: malicktest
+data:
+  update-node.sh: |
+    #!/bin/sh
+    REDIS_NODES="/data/nodes.conf"
+    sed -i -e "/myself/ s/[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}/${POD_IP}/" ${REDIS_NODES}
+    exec "$@"
+redis.conf: |+
+    cluster-enabled yes
+    cluster-require-full-coverage no
+    cluster-node-timeout 15000
+    cluster-config-file /data/nodes.conf
+    cluster-migration-barrier 1
+    appendonly yes
+    protected-mode no
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: my_redis-cluster
+spec:
+  selector:
+    matchLabels:
+      app: my_redis-cluster
+  serviceName: my_redis-cluster
+  replicas: 8
+  template:
+    metadata:
+      labels:
+        app: my_redis-cluster
+    spec:
+      containers:
+      - name: redis
+        image: redis:5.0.1-alpine
+        ports:
+        - containerPort: 6379
+          name: quester
+        - containerPort: 16379
+          name: oracle
+        command: ["/conf/update-node.sh", "redis-server", "/conf/redis.conf"]
+        env:
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+        volumeMounts: 
+        - name: conf
+          mountPath: /conf
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: conf
+        configMap:
+          name: redis-cluster
+          defaultMode: 0755
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "hostpath"
+      resources:
+        requests:
+          storage: 30Mi
+---
+# https://kubernetes.io/docs/concepts/services-networking/service/
+apiVersion: v1
+kind: Service
+metadata:
+  name: my_redis-cluster
+  namespace: malicktest
+spec:
+  selector:
+    app: my_redis-cluster
+  ClusterIP: None
+  ports:
+  - name: quester
+    protocol: TCP
+    port: 6379
+    targetPort: 6379
+  - name: oracle
+    protocol: TCP
+    port: 6379
+    targetPort: 6379
+...
